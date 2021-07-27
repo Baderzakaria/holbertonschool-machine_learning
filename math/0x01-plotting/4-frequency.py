@@ -2,8 +2,8 @@
 import numpy as np
 import matplotlib.pyplot as plt
 
-np.random.seed(5)
-student_grades = np.random.normal(68, 15, 50)
+np.random.seed(4)
+student_grades = np.random.normal(68, 15, 10)
 
 x_bins = np.arange(0, 110, 10)
 plt.hist(student_grades, bins=x_bins, edgecolor='black')
