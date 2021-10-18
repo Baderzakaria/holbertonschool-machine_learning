@@ -13,7 +13,7 @@ class NST:
                     'block4_conv1', 'block5_conv1']
     content_layer = 'block5_conv2'
 
-    def __init__(self, style_image, content_image, alpha=1e4, beta=1):
+    def __init__(self, style_image, content_image, alpha=1e4, beta=1, var=10):
         """define and initialize variables"""
 
         # After eager execution is enabled, operations are executed as they are
@@ -44,6 +44,8 @@ class NST:
         self.alpha = alpha
         # Weight for style cost
         self.beta = beta
+        # Weight for the variational cost
+        self.var = var
 
         # Load the VGG19 model for the cost calculation
         self.load_model()
@@ -257,3 +259,193 @@ class NST:
         style_cost = tf.add_n(style_costs)
 
         return style_cost
+
+    def content_cost(self, content_output):
+        """function that calculates the content cost for content_output"""
+
+        # Reminder:
+        # content layer output of the content_image is
+        # self.content_feature (tensor)
+
+        # Convert content_output to a tensor of 4 dimensions
+        # to match the shape of self.content_feature
+        # if content_output.ndim == 3:
+        #     content_output = content_output[tf.newaxis, ...]
+        # print("content_output.shape:", content_output.shape)
+
+        err = "content_output must be a tensor of shape {}".format(
+            self.content_feature.shape)
+        if not isinstance(content_output, (tf.Tensor, tf.Variable)):
+            raise TypeError(err)
+        if content_output.shape != self.content_feature.shape:
+            raise TypeError(err)
+
+        # Calculate the mean squared error between content_output and
+        # self.content_feature
+        content_cost = tf.reduce_mean(tf.square(
+            content_output - self.content_feature))
+
+        return content_cost
+
+    def total_cost(self, generated_image):
+        """function that calculates the total cost for the generated image"""
+
+        err = "generated_image must be a tensor of shape {}".format(
+            self.content_image.shape)
+        if not isinstance(generated_image, (tf.Tensor, tf.Variable)):
+            raise TypeError(err)
+        if generated_image.shape != self.content_image.shape:
+            raise TypeError(err)
+
+        # Preprocess the "generated" input image (initially: random noise)
+        # (rescale pixels to 255 prior to preprocessing as per
+        # vgg19 model reqs)
+        generated_image = tf.keras.applications.vgg19.preprocess_input(
+            generated_image * 255)
+        # Extract the actual output features from the model passing it
+        # the generated_image
+        outputs_generated = self.model(generated_image)
+        # note: style_outputs should be a list of tensors
+        style_outputs = outputs_generated[:-1]
+        # print("style_outputs:", np.array(outputs_generated[:-1]).shape,
+        #       np.array(outputs_generated[:-1]))
+        # note: content_output should be a tensor
+        content_ouput = outputs_generated[-1]
+        # print("content_output:", np.array(outputs_generated[-1]).shape)
+
+        # Evaluate the style_cost and content_cost from the output features
+        # of the generated_image
+        style_cost = self.style_cost(style_outputs)
+        content_cost = self.content_cost(content_ouput)
+
+        # Evaluate the variational cost from the generated_image
+        # in a call to variational_cost()
+        var_cost = self.variational_cost(generated_image)
+
+        total_cost = (self.alpha * content_cost + self.beta * style_cost
+                      + self.var * var_cost)
+
+        return (total_cost, content_cost, style_cost, var_cost)
+
+    def compute_grads(self, generated_image):
+        """function that computes the gradients for the generated image"""
+
+        err = "generated_image must be a tensor of shape {}".format(
+            self.content_image.shape)
+        if not isinstance(generated_image, (tf.Tensor, tf.Variable)):
+            raise TypeError(err)
+        if generated_image.shape != self.content_image.shape:
+            raise TypeError(err)
+
+        # Note: in the main file, generated_image is defined as
+        # a tf.Variable to contain the image to optimize. It is initialized
+        # with self.content_image (the tf.Variable must be the same shape
+        # as the content image)
+
+        # Use tf.GradientTape to update the generated_image (float image)
+        with tf.GradientTape() as tape:
+            # Calculate the loss in a call to total_cost()
+            loss = self.total_cost(generated_image)
+            total_cost, content_cost, style_cost, var_cost = loss
+
+        # Infer the gradients passing in the loss and the generated_image
+        gradients = tape.gradient(total_cost, generated_image)
+
+        return (gradients, total_cost, content_cost, style_cost, var_cost)
+
+    def generate_image(self, iterations=1000, step=None, lr=0.01,
+                       beta1=0.9, beta2=0.99):
+        """function that generates the neural style transfered image"""
+
+        if not isinstance(iterations, int):
+            raise TypeError("iterations must be an integer")
+        if iterations <= 0:
+            raise ValueError("iterations must be positive")
+        if step is not None:
+            if not isinstance(step, int):
+                raise TypeError("step must be an integer")
+            if step <= 0 or step >= iterations:
+                raise ValueError(
+                    "step must be positive and less than iterations")
+        if not isinstance(lr, (int, float)):
+            raise TypeError("lr must be a number")
+        if lr <= 0:
+            raise ValueError("lr must be positive")
+        if not isinstance(beta1, float):
+            raise TypeError("beta1 must be a float")
+        if beta1 < 0 or beta1 > 1:
+            raise ValueError("beta1 must be in the range [0, 1]")
+        if not isinstance(beta2, float):
+            raise TypeError("beta2 must be a float")
+        if beta2 < 0 or beta2 > 1:
+            raise ValueError("beta2 must be in the range [0, 1]")
+
+        # The generated_image is defined as a tf.Variable to contain
+        # the image to optimize. It is initialized with self.content_image
+        # (the tf.Variable must be the same shape as the content image)
+        generated_image = tf.Variable(self.content_image)
+        # Define the optimizer for training
+        # In tf 2.0:
+        # optimizer = tf.optimizers.Adam(learning_rate=lr,
+        #                                beta_1=beta1, beta_2=beta2)
+        # In tf 1.2:
+        optimizer = tf.train.AdamOptimizer(learning_rate=lr,
+                                           beta1=beta1, beta2=beta2)
+
+        # Initialize the variables used to keep track of the best
+        # cost and image, epoch by epoch
+        prev_total_cost = float('inf')
+        prev_image = generated_image
+
+        # Set the range of epochs
+        for i in range(iterations + 1):
+
+            # Compute the gradients and return the various costs
+            # in a call to compute_grads()
+            computed = self.compute_grads(generated_image)
+            (gradients, total_cost, content_cost,
+             style_cost, var_cost) = computed
+
+            # Print the costs at every "step"
+            if i % step == 0 or i == iterations:
+                strg = "Cost at iteration {}: {}, content {}, style {}, var {}"
+                print(strg.format(i, total_cost, content_cost,
+                                  style_cost, var_cost))
+
+            # Backpropagation pass
+            if i != iterations:
+                # The generated_image (tensor, float image) is updated
+                optimizer.apply_gradients([(gradients, generated_image)])
+                # Then clipped to stay in the range [0..1]
+                clipped_image = tf.clip_by_value(
+                    generated_image, clip_value_min=0, clip_value_max=1)
+                generated_image.assign(clipped_image)
+
+            # Update prev_total_cost (best cost) and prev_image (best image)
+            if total_cost <= prev_total_cost:
+                prev_total_cost = total_cost
+                # print("prev_total_cost:", "{}".format(prev_total_cost))
+                prev_image = generated_image
+
+        # Convert the tensors into numpy objects
+        cost = prev_total_cost.numpy()
+        # note: grab the tensor image (rank 4) at index,
+        # to convert it to a tensor image of rank 3
+        generated_image = prev_image[0].numpy()
+
+        return (generated_image, cost)
+
+    @staticmethod
+    def variational_cost(generated_image):
+        """function that calculates the variational cost
+        for the generated image"""
+
+        # The following standard tf implementation returns an numpy array
+        # of this type: array([149419.88], dtype=float32):
+        # loss = tf.image.total_variation(generated_image).numpy()
+        # This returns a tf tensor of this type
+        # tf.Tensor([8765200.], shape=(1,), dtype=float32):
+        loss = tf.image.total_variation(generated_image)[0]
+        # print("loss:", loss)
+
+        return loss

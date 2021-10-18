@@ -1,11 +1,8 @@
 #!/usr/bin/env python3
 
 import matplotlib.image as mpimg
-import matplotlib.pyplot as plt
-import numpy as np
-import tensorflow as tf
 
-NST = __import__('1-neural_style').NST
+NST = __import__('3-neural_style').NST
 
 
 if __name__ == '__main__':
@@ -13,4 +10,5 @@ if __name__ == '__main__':
     content_image = mpimg.imread("golden_gate.jpg")
 
     nst = NST(style_image, content_image)
-    nst.model.summary()
+    print(nst.gram_style_features)
+    print(nst.content_feature)
