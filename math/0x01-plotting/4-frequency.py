@@ -2,7 +2,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
 
-np.random.seed(5)
+np.random.seed(4)
 student_grades = np.random.normal(68, 15, 50)
 
 x_bins = np.arange(0, 110, 10)
