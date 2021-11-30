@@ -1,54 +1,49 @@
 #!/usr/bin/env python3
-"""Calculates the symmetric P affinities of a data set"""
+""" Do the Dimensionality Reduction """
 import numpy as np
+
+
 P_init = __import__('2-P_init').P_init
 HP = __import__('3-entropy').HP
 
 
 def P_affinities(X, tol=1e-5, perplexity=30.0):
     """
-    Calculates the symmetric P affinities of a data set
-    Args:
-        X: is a numpy.ndarray of shape (n, d) containing the dataset
-        to be transformed by t-SNE
-        - n is the number of data points
-        - d is the number of dimensions in each point
-        tol: is the maximum tolerance allowed (inclusive) for
-        the difference in Shannon entropy from
-        perplexity: is the perplexity that all Gaussian distributions
-        should have
-    Returns:
-    P, a numpy.ndarray of shape (n, n) containing the symmetric P affinities
+    function for computing the P affinities of a dataset
+    return P, H, or None, None on failure
     """
-    n, _ = X.shape
-    D, P, betas, H = P_init(X, perplexity)
-    for i in range(n):
-        copy = D[i]
-        copy = np.delete(copy, i, axis=0)
-        Hi, Pi = HP(copy, betas[i])
-        betamin = None
-        betamax = None
-        Hdiff = Hi - H
+    # P is initialized to the identity matrix
+    No, _ = X.shape
 
-        while np.abs(Hdiff) > tol:
-            if Hdiff > 0:
-                betamin = betas[i, 0]
-                if betamax is None:
-                    betas[i] = betas[i] * 2
-                else:
-                    betas[i] = (betas[i] + betamax) / 2
+    # Compute pairwise distances
+    # H is the Shannon entropy of P
+    # P is the symmetric normalized P affinities
+    # D is the pairwise distances
+    # beta is the precision of the Gaussian distribution used for
+    D, P, bgh, H = P_init(X, perplexity)
+
+    for i in range(No):
+        ms_neight = np.ones(D[i].shape, dtype=bool)
+        ms_neight[i] = 0
+
+        Hi, P[i][ms_neight] = HP(D[i][ms_neight], bgh[i])
+
+        high = None
+        low = 0
+
+        # tol is a tolerance for finding the perplexity
+        while abs(Hi - H) > tol:
+            # validate if Hi is a valid perplexity
+            if Hi < H:
+                high = bgh[i, 0]
+                bgh[i, 0] = (high + low) / 2
             else:
-                betamax = betas[i, 0]
-                if betamin is None:
-                    betas[i] = betas[i] / 2
+                low = bgh[i, 0]
+                if high is None:
+                    bgh[i, 0] *= 2
                 else:
-                    betas[i] = (betas[i] + betamin) / 2
-            # Recompute the values
-            Hi, Pi = HP(copy, betas[i])
-            Hdiff = Hi - H
-        # Set the final row of P, reinserting the missing spot as 0
-        aux = np.insert(Pi, i, 0)
-        P[i] = aux
-    # The symmetrized conditional probabilities
-    P = (P.T + P) / (2*n)
-    return P
+                    bgh[i, 0] = (high + low) / 2
+
+            Hi, P[i][ms_neight] = HP(D[i][ms_neight], bgh[i])
+
+    return (P + P.T) / (2 * No)
