@@ -1,22 +1,17 @@
 #!/usr/bin/env python3
-"""
-3-entropy.py
-"""
+""" Do the Dimensionality Reduction """
 import numpy as np
 
 
 def HP(Di, beta):
     """
-    function that calculates the Shannon entropy and
-    P affinities relative to a data point
+    HP is the function that calculates the entropy of a distribution
+    return: the entropy of a distribution
     """
+    # ecuation of P(j|i)
 
-    # Compute the affinities of the points
-    A = np.exp(-Di * beta)
-    B = np.sum(np.exp(-Di * beta), axis=0)
-    Pi = A / B
+    den = np.sum(np.exp(-Di.copy() * beta))
+    Pi = np.exp(-Di.copy() * beta) / den
 
-    # Compute the Shannon entropy of the points
-    Hi = -np.sum(Pi * np.log2(Pi))
-
-    return Hi, Pi
+    # 1 / (2σ)^2
+    return -np.sum(Pi * np.log2(Pi)), Pi
